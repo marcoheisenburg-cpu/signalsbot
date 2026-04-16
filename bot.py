@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 from telegram import Bot
 
-from generator import Signal, SignalGenerator
+from generator import SignalGenerator
 
 load_dotenv()
 
@@ -39,23 +39,21 @@ def format_price(v: float) -> str:
     return f"{v:.5f}"
 
 
-def emoji_for_action(action: str) -> str:
-    return "🟢" if "BUY" in action else "🔴"
+def emoji_for_direction(direction: str) -> str:
+    return "🟢" if direction == "BUY" else "🔴"
 
 
-def format_signal(signal: Signal, affiliate_link: str) -> str:
-    side = emoji_for_action(signal.action)
+def format_signal(signal: dict, affiliate_link: str) -> str:
+    side = emoji_for_direction(signal["direction"])
     return (
-        f"{side} <b>{signal.label} — {signal.action}</b>\n"
-        f"Symbol: <code>{signal.symbol}</code>\n"
-        f"Entry: <b>{format_price(signal.entry)}</b>\n"
-        f"Take Profit: <b>{format_price(signal.tp)}</b>\n"
-        f"Stop Loss: <b>{format_price(signal.sl)}</b>\n"
-        f"Confidence: <b>{signal.confidence}%</b>\n"
-        f"RSI(14): <b>{signal.rsi}</b>\n"
-        f"EMA(9): <b>{signal.ema9}</b> | EMA(21): <b>{signal.ema21}</b>\n"
-        f"Time: {signal.timestamp}\n"
-        f"Strategy: {signal.note}\n\n"
+        f"{side} <b>{signal['asset']} — {signal['direction']}</b>\n"
+        f"Entry: <b>{format_price(signal['entry'])}</b>\n"
+        f"Take Profit: <b>{format_price(signal['tp'])}</b> ({signal['tp_pct']}%)\n"
+        f"Stop Loss: <b>{format_price(signal['sl'])}</b> ({signal['sl_pct']}%)\n"
+        f"Confidence: <b>{signal['confidence']}%</b>\n"
+        f"Timeframe: <b>{signal['timeframe']}</b>\n"
+        f"RSI(14): <b>{signal['rsi']}</b>\n"
+        f"Reason: {signal['rationale']}\n\n"
         f"👉 <a href=\"{affiliate_link}\">{CTA_TEXT}</a>\n\n"
         f"<i>{DISCLAIMER}</i>"
     )
@@ -63,6 +61,9 @@ def format_signal(signal: Signal, affiliate_link: str) -> str:
 
 async def post_signal(bot: Bot, generator: SignalGenerator, asset_index: int):
     signal = await generator.get_signal(asset_index)
+    if not signal:
+        raise RuntimeError("No signal returned")
+
     text = format_signal(signal, AFFILIATE_LINK)
     await bot.send_message(
         chat_id=GROUP_ID,
@@ -70,7 +71,7 @@ async def post_signal(bot: Bot, generator: SignalGenerator, asset_index: int):
         parse_mode="HTML",
         disable_web_page_preview=True,
     )
-    logger.info("Posted signal for %s", signal.symbol)
+    logger.info("Posted signal for %s", signal["asset"])
 
 
 def get_next_run() -> datetime:
@@ -103,20 +104,19 @@ async def scheduler_loop():
     generator = SignalGenerator()
     asset_index = 0
 
-    try:
-        while True:
-            next_run = get_next_run()
-            wait_seconds = max(1, int((next_run - datetime.now(timezone.utc)).total_seconds()))
-            logger.info("Next post at %s", next_run.isoformat())
-            await asyncio.sleep(wait_seconds)
-            try:
-                await post_signal(bot, generator, asset_index)
-                asset_index += 1
-            except Exception as e:
-                logger.exception("Failed to post signal: %s", e)
-            await asyncio.sleep(2)
-    finally:
-        await generator.close()
+    while True:
+        next_run = get_next_run()
+        wait_seconds = max(1, int((next_run - datetime.now(timezone.utc)).total_seconds()))
+        logger.info("Next post at %s", next_run.isoformat())
+        await asyncio.sleep(wait_seconds)
+
+        try:
+            await post_signal(bot, generator, asset_index)
+            asset_index += 1
+        except Exception as e:
+            logger.exception("Failed to post signal: %s", e)
+
+        await asyncio.sleep(2)
 
 
 async def main():
