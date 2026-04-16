@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 from telegram import Bot
 
-from signals.generator import Signal, SignalGenerator
+from generator import Signal, SignalGenerator
 
 load_dotenv()
 
