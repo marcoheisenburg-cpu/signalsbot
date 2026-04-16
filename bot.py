@@ -104,6 +104,14 @@ async def scheduler_loop():
     generator = SignalGenerator()
     asset_index = 0
 
+    # Send one signal immediately when the bot starts
+    try:
+        await post_signal(bot, generator, asset_index)
+        logger.info("Startup test signal sent successfully")
+        asset_index += 1
+    except Exception as e:
+        logger.exception("Failed to send startup signal: %s", e)
+
     while True:
         next_run = get_next_run()
         wait_seconds = max(1, int((next_run - datetime.now(timezone.utc)).total_seconds()))
