@@ -1,10 +1,14 @@
 import asyncio
 import logging
 import os
+import tempfile
 from datetime import datetime, timedelta, timezone
 
 from dotenv import load_dotenv
 from telegram import Bot
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 
 from generator import SignalGenerator
 
@@ -59,19 +63,57 @@ def format_signal(signal: dict, affiliate_link: str) -> str:
     )
 
 
+def build_chart(signal: dict) -> str:
+    prices = signal.get("prices", [])
+    if not prices:
+        raise RuntimeError("No price history available for chart")
+
+    x = list(range(1, len(prices) + 1))
+
+    fig = plt.figure(figsize=(10, 6))
+    ax = fig.add_subplot(111)
+
+    ax.plot(x, prices, linewidth=2, label="Price")
+    ax.axhline(signal["entry"], linestyle="--", linewidth=1.5, label="Entry")
+    ax.axhline(signal["tp"], linestyle="--", linewidth=1.5, label="Take Profit")
+    ax.axhline(signal["sl"], linestyle="--", linewidth=1.5, label="Stop Loss")
+
+    ax.set_title(f"{signal['asset']} — {signal['direction']}")
+    ax.set_xlabel("Periods")
+    ax.set_ylabel("Price")
+    ax.grid(True, alpha=0.3)
+    ax.legend()
+
+    temp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+    fig.tight_layout()
+    fig.savefig(temp.name, dpi=160, bbox_inches="tight")
+    plt.close(fig)
+
+    return temp.name
+
+
 async def post_signal(bot: Bot, generator: SignalGenerator, asset_index: int):
     signal = await generator.get_signal(asset_index)
     if not signal:
         raise RuntimeError("No signal returned")
 
-    text = format_signal(signal, AFFILIATE_LINK)
-    await bot.send_message(
-        chat_id=GROUP_ID,
-        text=text,
-        parse_mode="HTML",
-        disable_web_page_preview=True,
-    )
-    logger.info("Posted signal for %s", signal["asset"])
+    caption = format_signal(signal, AFFILIATE_LINK)
+    chart_path = build_chart(signal)
+
+    try:
+        with open(chart_path, "rb") as photo:
+            await bot.send_photo(
+                chat_id=GROUP_ID,
+                photo=photo,
+                caption=caption,
+                parse_mode="HTML",
+            )
+        logger.info("Posted signal chart for %s", signal["asset"])
+    finally:
+        try:
+            os.remove(chart_path)
+        except Exception:
+            pass
 
 
 def get_next_run() -> datetime:
@@ -104,7 +146,6 @@ async def scheduler_loop():
     generator = SignalGenerator()
     asset_index = 0
 
-    # Send one signal immediately when the bot starts
     try:
         await post_signal(bot, generator, asset_index)
         logger.info("Startup test signal sent successfully")
