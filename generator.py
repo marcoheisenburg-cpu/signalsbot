@@ -1,10 +1,3 @@
-"""
-Signal Generator
-----------------
-Uses free APIs to fetch price data and generates BUY/SELL signals
-based on RSI + EMA crossover rules.
-"""
-
 import os
 import random
 import aiohttp
@@ -143,39 +136,37 @@ class SignalGenerator:
             log.error("Signal fetch error for %s: %s", asset_meta["asset"], e)
             return self._fallback_signal(asset_meta)
 
-async def _from_coingecko(self, session: aiohttp.ClientSession, meta: dict) -> dict:
-    # CoinGecko OHLC endpoint for candlestick-style data
-    url = (
-        f"https://api.coingecko.com/api/v3/coins/{meta['id']}/ohlc"
-        f"?vs_currency=usd&days=30"
-    )
+    async def _from_coingecko(self, session: aiohttp.ClientSession, meta: dict) -> dict:
+        url = (
+            f"https://api.coingecko.com/api/v3/coins/{meta['id']}/ohlc"
+            f"?vs_currency=usd&days=30"
+        )
 
-    async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as r:
-        data = await r.json()
+        async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as r:
+            data = await r.json()
 
-    if not data or not isinstance(data, list):
-        raise ValueError("No CoinGecko OHLC data")
+        if not data or not isinstance(data, list):
+            raise ValueError("No CoinGecko OHLC data")
 
-    candles = []
-    closes = []
+        candles = []
+        closes = []
 
-    for row in data:
-        # row format: [timestamp, open, high, low, close]
-        ts, o, h, l, c = row
-        dt = datetime.utcfromtimestamp(ts / 1000).strftime("%Y-%m-%d")
+        for row in data:
+            ts, o, h, l, c = row
+            dt = datetime.utcfromtimestamp(ts / 1000).strftime("%Y-%m-%d")
 
-        candles.append({
-            "date": dt,
-            "open": float(o),
-            "high": float(h),
-            "low": float(l),
-            "close": float(c),
-        })
-        closes.append(float(c))
+            candles.append({
+                "date": dt,
+                "open": float(o),
+                "high": float(h),
+                "low": float(l),
+                "close": float(c),
+            })
+            closes.append(float(c))
 
-    signal = _generate_signal_from_price(meta, closes[-1], closes)
-    signal["candles"] = candles
-    return signal
+        meta_with_candles = dict(meta)
+        meta_with_candles["candles"] = candles
+        return _generate_signal_from_price(meta_with_candles, closes[-1], closes)
 
     async def _from_av_fx(self, session: aiohttp.ClientSession, meta: dict) -> dict:
         url = (
@@ -213,7 +204,6 @@ async def _from_coingecko(self, session: aiohttp.ClientSession, meta: dict) -> d
 
         meta_with_candles = dict(meta)
         meta_with_candles["candles"] = candles
-
         return _generate_signal_from_price(meta_with_candles, closes[-1], closes)
 
     async def _from_av_stock(self, session: aiohttp.ClientSession, meta: dict) -> dict:
@@ -251,7 +241,6 @@ async def _from_coingecko(self, session: aiohttp.ClientSession, meta: dict) -> d
 
         meta_with_candles = dict(meta)
         meta_with_candles["candles"] = candles
-
         return _generate_signal_from_price(meta_with_candles, closes[-1], closes)
 
     def _fallback_signal(self, meta: dict) -> dict:
