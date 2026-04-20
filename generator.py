@@ -143,21 +143,39 @@ class SignalGenerator:
             log.error("Signal fetch error for %s: %s", asset_meta["asset"], e)
             return self._fallback_signal(asset_meta)
 
-    async def _from_coingecko(self, session: aiohttp.ClientSession, meta: dict) -> dict:
-        url = (
-            f"https://api.coingecko.com/api/v3/coins/{meta['id']}/market_chart"
-            f"?vs_currency=usd&days=30&interval=daily"
-        )
-        async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as r:
-            data = await r.json()
+async def _from_coingecko(self, session: aiohttp.ClientSession, meta: dict) -> dict:
+    # CoinGecko OHLC endpoint for candlestick-style data
+    url = (
+        f"https://api.coingecko.com/api/v3/coins/{meta['id']}/ohlc"
+        f"?vs_currency=usd&days=30"
+    )
 
-        prices = [p[1] for p in data["prices"]]
-        current_price = prices[-1]
+    async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as r:
+        data = await r.json()
 
-        # No true candles here yet; line-chart fallback for crypto
-        signal = _generate_signal_from_price(meta, current_price, prices)
-        signal["candles"] = []
-        return signal
+    if not data or not isinstance(data, list):
+        raise ValueError("No CoinGecko OHLC data")
+
+    candles = []
+    closes = []
+
+    for row in data:
+        # row format: [timestamp, open, high, low, close]
+        ts, o, h, l, c = row
+        dt = datetime.utcfromtimestamp(ts / 1000).strftime("%Y-%m-%d")
+
+        candles.append({
+            "date": dt,
+            "open": float(o),
+            "high": float(h),
+            "low": float(l),
+            "close": float(c),
+        })
+        closes.append(float(c))
+
+    signal = _generate_signal_from_price(meta, closes[-1], closes)
+    signal["candles"] = candles
+    return signal
 
     async def _from_av_fx(self, session: aiohttp.ClientSession, meta: dict) -> dict:
         url = (
