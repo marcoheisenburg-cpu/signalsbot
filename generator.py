@@ -3,10 +3,6 @@ Signal Generator
 ----------------
 Uses free APIs to fetch price data and generates BUY/SELL signals
 based on RSI + EMA crossover rules.
-
-Free data sources:
-  - CoinGecko  : crypto (no key needed)
-  - Alpha Vantage: forex, stocks, commodities (free key, 25 req/day)
 """
 
 import os
@@ -37,10 +33,12 @@ ASSET_POOL = [
 def _calc_rsi(prices: list[float], period: int = 14) -> float:
     if len(prices) < period + 1:
         return 50.0
+
     gains, losses = [], []
     for i in range(1, period + 1):
         diff = prices[-i] - prices[-i - 1]
         (gains if diff > 0 else losses).append(abs(diff))
+
     avg_gain = sum(gains) / period if gains else 0.001
     avg_loss = sum(losses) / period if losses else 0.001
     rs = avg_gain / avg_loss
@@ -50,6 +48,7 @@ def _calc_rsi(prices: list[float], period: int = 14) -> float:
 def _calc_ema(prices: list[float], period: int) -> float:
     if len(prices) < period:
         return prices[-1]
+
     k = 2 / (period + 1)
     ema = sum(prices[:period]) / period
     for p in prices[period:]:
@@ -108,6 +107,7 @@ def _generate_signal_from_price(asset_meta: dict, price: float, prices_history: 
         "rationale": rationale,
         "rsi": rsi,
         "prices": prices_history,
+        "candles": asset_meta.get("candles", []),
     }
 
 
@@ -153,7 +153,11 @@ class SignalGenerator:
 
         prices = [p[1] for p in data["prices"]]
         current_price = prices[-1]
-        return _generate_signal_from_price(meta, current_price, prices)
+
+        # No true candles here yet; line-chart fallback for crypto
+        signal = _generate_signal_from_price(meta, current_price, prices)
+        signal["candles"] = []
+        return signal
 
     async def _from_av_fx(self, session: aiohttp.ClientSession, meta: dict) -> dict:
         url = (
@@ -167,9 +171,32 @@ class SignalGenerator:
         ts = data.get("Time Series FX (Daily)", {})
         if not ts:
             raise ValueError("No AV FX data")
-        prices = [float(v["4. close"]) for v in list(ts.values())[:30]]
-        prices.reverse()
-        return _generate_signal_from_price(meta, prices[-1], prices)
+
+        rows = list(ts.items())[:30]
+        rows.reverse()
+
+        candles = []
+        closes = []
+
+        for dt, v in rows:
+            o = float(v["1. open"])
+            h = float(v["2. high"])
+            l = float(v["3. low"])
+            c = float(v["4. close"])
+
+            candles.append({
+                "date": dt,
+                "open": o,
+                "high": h,
+                "low": l,
+                "close": c,
+            })
+            closes.append(c)
+
+        meta_with_candles = dict(meta)
+        meta_with_candles["candles"] = candles
+
+        return _generate_signal_from_price(meta_with_candles, closes[-1], closes)
 
     async def _from_av_stock(self, session: aiohttp.ClientSession, meta: dict) -> dict:
         url = (
@@ -182,16 +209,51 @@ class SignalGenerator:
         ts = data.get("Time Series (Daily)", {})
         if not ts:
             raise ValueError("No AV stock data")
-        prices = [float(v["4. close"]) for v in list(ts.values())[:30]]
-        prices.reverse()
-        return _generate_signal_from_price(meta, prices[-1], prices)
+
+        rows = list(ts.items())[:30]
+        rows.reverse()
+
+        candles = []
+        closes = []
+
+        for dt, v in rows:
+            o = float(v["1. open"])
+            h = float(v["2. high"])
+            l = float(v["3. low"])
+            c = float(v["4. close"])
+
+            candles.append({
+                "date": dt,
+                "open": o,
+                "high": h,
+                "low": l,
+                "close": c,
+            })
+            closes.append(c)
+
+        meta_with_candles = dict(meta)
+        meta_with_candles["candles"] = candles
+
+        return _generate_signal_from_price(meta_with_candles, closes[-1], closes)
 
     def _fallback_signal(self, meta: dict) -> dict:
         fallback_prices = {
-            "BTC/USD": 63000, "ETH/USD": 3100, "BNB/USD": 580, "SOL/USD": 145,
-            "EUR/USD": 1.085, "GBP/USD": 1.265, "USD/JPY": 154.5,
-            "XAU/USD": 2320, "USO/USD": 79, "SPX500": 520, "NAS100": 445,
+            "BTC/USD": 63000,
+            "ETH/USD": 3100,
+            "BNB/USD": 580,
+            "SOL/USD": 145,
+            "EUR/USD": 1.085,
+            "GBP/USD": 1.265,
+            "USD/JPY": 154.5,
+            "XAU/USD": 2320,
+            "USO/USD": 79,
+            "SPX500": 520,
+            "NAS100": 445,
         }
+
         price = fallback_prices.get(meta["asset"], 100.0)
         dummy_prices = [price * (1 + (i % 5 - 2) * 0.002) for i in range(30)]
-        return _generate_signal_from_price(meta, price, dummy_prices)
+
+        signal = _generate_signal_from_price(meta, price, dummy_prices)
+        signal["candles"] = []
+        return signal
