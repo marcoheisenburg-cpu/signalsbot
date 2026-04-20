@@ -3,6 +3,8 @@ import logging
 import os
 import tempfile
 from datetime import datetime, timedelta, timezone
+import pandas as pd
+import mplfinance as mpf
 
 from dotenv import load_dotenv
 from telegram import Bot
@@ -64,30 +66,65 @@ def format_signal(signal: dict, affiliate_link: str) -> str:
 
 
 def build_chart(signal: dict) -> str:
-    prices = signal.get("prices", [])
-    if not prices:
-        raise RuntimeError("No price history available for chart")
+    candles = signal.get("candles", [])
 
-    x = list(range(1, len(prices) + 1))
+    # Fallback to line chart if candles are not available
+    if not candles:
+        prices = signal.get("prices", [])
+        if not prices:
+            raise RuntimeError("No price history available for chart")
 
-    fig = plt.figure(figsize=(10, 6))
-    ax = fig.add_subplot(111)
+        x = list(range(1, len(prices) + 1))
+        fig = plt.figure(figsize=(10, 6))
+        ax = fig.add_subplot(111)
 
-    ax.plot(x, prices, linewidth=2, label="Price")
-    ax.axhline(signal["entry"], linestyle="--", linewidth=1.5, label="Entry")
-    ax.axhline(signal["tp"], linestyle="--", linewidth=1.5, label="Take Profit")
-    ax.axhline(signal["sl"], linestyle="--", linewidth=1.5, label="Stop Loss")
+        ax.plot(x, prices, linewidth=2, label="Price")
+        ax.axhline(signal["entry"], linestyle="--", linewidth=1.5, label="Entry")
+        ax.axhline(signal["tp"], linestyle="--", linewidth=1.5, label="Take Profit")
+        ax.axhline(signal["sl"], linestyle="--", linewidth=1.5, label="Stop Loss")
 
-    ax.set_title(f"{signal['asset']} — {signal['direction']}")
-    ax.set_xlabel("Periods")
-    ax.set_ylabel("Price")
-    ax.grid(True, alpha=0.3)
-    ax.legend()
+        ax.set_title(f"{signal['asset']} — {signal['direction']}")
+        ax.set_xlabel("Periods")
+        ax.set_ylabel("Price")
+        ax.grid(True, alpha=0.3)
+        ax.legend()
+
+        temp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+        fig.tight_layout()
+        fig.savefig(temp.name, dpi=160, bbox_inches="tight")
+        plt.close(fig)
+        return temp.name
+
+    df = pd.DataFrame(candles)
+    df["date"] = pd.to_datetime(df["date"])
+    df = df.set_index("date")
+    df = df.rename(columns={
+        "open": "Open",
+        "high": "High",
+        "low": "Low",
+        "close": "Close",
+    })
+
+    apds = [
+        mpf.make_addplot([signal["entry"]] * len(df), linestyle="--"),
+        mpf.make_addplot([signal["tp"]] * len(df), linestyle="--"),
+        mpf.make_addplot([signal["sl"]] * len(df), linestyle="--"),
+    ]
 
     temp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
-    fig.tight_layout()
-    fig.savefig(temp.name, dpi=160, bbox_inches="tight")
-    plt.close(fig)
+
+    mpf.plot(
+        df,
+        type="candle",
+        style="charles",
+        addplot=apds,
+        title=f"{signal['asset']} — {signal['direction']}",
+        ylabel="Price",
+        volume=False,
+        figsize=(10, 6),
+        tight_layout=True,
+        savefig=dict(fname=temp.name, dpi=160, bbox_inches="tight"),
+    )
 
     return temp.name
 
