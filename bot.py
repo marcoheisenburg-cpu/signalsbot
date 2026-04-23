@@ -3,11 +3,12 @@ import logging
 import os
 import tempfile
 from datetime import datetime, timedelta, timezone
+
 import pandas as pd
 import mplfinance as mpf
-
 from dotenv import load_dotenv
 from telegram import Bot
+
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -18,6 +19,7 @@ load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 GROUP_ID = os.getenv("GROUP_ID", "")
+CHANNEL_ID = os.getenv("CHANNEL_ID", "")
 AFFILIATE_LINK = os.getenv("AFFILIATE_LINK", "")
 SIGNALS_PER_DAY = int(os.getenv("SIGNALS_PER_DAY", "5"))
 
@@ -129,6 +131,21 @@ def build_chart(signal: dict) -> str:
     return temp.name
 
 
+def get_destinations() -> list[str]:
+    destinations = []
+
+    if GROUP_ID:
+        destinations.append(GROUP_ID)
+
+    if CHANNEL_ID:
+        destinations.append(CHANNEL_ID)
+
+    if not destinations:
+        raise RuntimeError("At least one of GROUP_ID or CHANNEL_ID must be set")
+
+    return destinations
+
+
 async def post_signal(bot: Bot, generator: SignalGenerator, asset_index: int):
     signal = await generator.get_signal(asset_index)
     if not signal:
@@ -136,16 +153,21 @@ async def post_signal(bot: Bot, generator: SignalGenerator, asset_index: int):
 
     caption = format_signal(signal, AFFILIATE_LINK)
     chart_path = build_chart(signal)
+    destinations = get_destinations()
 
     try:
-        with open(chart_path, "rb") as photo:
-            await bot.send_photo(
-                chat_id=GROUP_ID,
-                photo=photo,
-                caption=caption,
-                parse_mode="HTML",
-            )
-        logger.info("Posted signal chart for %s", signal["asset"])
+        for chat_id in destinations:
+            try:
+                with open(chart_path, "rb") as photo:
+                    await bot.send_photo(
+                        chat_id=chat_id,
+                        photo=photo,
+                        caption=caption,
+                        parse_mode="HTML",
+                    )
+                logger.info("Posted signal chart for %s to %s", signal["asset"], chat_id)
+            except Exception as e:
+                logger.exception("Failed sending %s to %s: %s", signal["asset"], chat_id, e)
     finally:
         try:
             os.remove(chart_path)
@@ -172,12 +194,13 @@ def get_next_run() -> datetime:
 async def scheduler_loop():
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN is missing")
-    if not GROUP_ID:
-        raise RuntimeError("GROUP_ID is missing")
     if not AFFILIATE_LINK:
         raise RuntimeError("AFFILIATE_LINK is missing")
     if not os.getenv("ALPHA_VANTAGE_KEY"):
         raise RuntimeError("ALPHA_VANTAGE_KEY is missing")
+
+    destinations = get_destinations()
+    logger.info("Configured destinations: %s", ", ".join(destinations))
 
     bot = Bot(token=BOT_TOKEN)
     generator = SignalGenerator()
