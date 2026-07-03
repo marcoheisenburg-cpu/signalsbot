@@ -24,7 +24,7 @@ AFFILIATE_LINK = os.getenv("AFFILIATE_LINK", "")
 SIGNALS_PER_DAY = int(os.getenv("SIGNALS_PER_DAY", "5"))
 
 POST_HOURS = [7, 9, 12, 15, 18]  # UTC
-CTA_TEXT = "Open your FREE account on PatternAlpha Signals"
+CTA_TEXT = "Open your FREE account on AffiliRocket Signals"
 DISCLAIMER = (
     "Risk warning: Trading involves risk. This content is for informational "
     "purposes only and is not investment advice."
